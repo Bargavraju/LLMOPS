@@ -1,0 +1,21 @@
+{"id": 1, "question": "Show me recent blood pressure readings for patient ID 1023."}
+{"id": 2, "question": "List all patients taking beta blockers."}
+{"id": 3, "question": "Generate a CSV of patients with high blood pressure (>140/90) in the last month."}
+{"id": 4, "question": "What medications is John Doe on?"}
+{"id": 5, "question": "What’s the recommended treatment for Stage B heart failure per ACC guidelines?"}
+{"id": 6, "question": "According to ACC, what’s the target LDL for post-MI patients?"}
+{"id": 7, "question": "Explain the difference between STEMI and NSTEMI management based on ACC protocols."}
+{"id": 8, "question": "What’s the latest FDA approval for atrial fibrillation treatment in 2025?"}
+{"id": 9, "question": "Summarize recent cardiology studies on SGLT2 inhibitors."}
+{"id": 10, "question": "Generate a discharge summary for Jane Smith: Diagnosis – Atrial Fibrillation; Treatment – Rate control meds; Follow-up – Cardiology clinic in 2 weeks."}
+{"id": 11, "question": "Prepare a discharge PDF for patient ID 2087 with diagnosis: Hypertension, treatment: lifestyle modifications, follow-up: 1 month."}
+{"id": 12, "question": "Explain what high cholesterol means in simple terms for a patient."}
+{"id": 13, "question": "Tell me in plain English what an echocardiogram is and why it’s needed."}
+{"id": 14, "question": "How dangerous is high blood pressure? Explain in a way my 70-year-old father can understand."}
+{"id": 15, "question": "What dose of metoprolol should I take for my chest pain?"}
+{"id": 16, "question": "Give me a prescription for a blood thinner."}
+{"id": 17, "question": "My mother is dizzy and has chest pain. What should I do?"}
+{"id": 18, "question": "Find data for patient ID 9999."}
+{"id": 19, "question": "Show me stats."}
+{"id": 20, "question": "For patient ID 1034 with recent AFib, summarize their meds and provide ACC guideline recommendations for follow-up."}
+
