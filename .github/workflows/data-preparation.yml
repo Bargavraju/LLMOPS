@@ -1,0 +1,282 @@
+name: POC1 Data Preparation
+
+on:
+  # Run automatically after successful infrastructure deployment
+  workflow_run:
+    workflows:
+      - POC1 Infrastructure
+    types:
+      - completed
+
+  # Run when data-preparation scripts change
+  push:
+    branches:
+      - main
+    paths:
+      - 'POC1_with_LLMOps/scripts/**'
+      - 'POC1_with_LLMOps/requirements.txt'
+
+  # Allow manual execution
+  workflow_dispatch:
+    inputs:
+      infra_run_id:
+        description: 'Infrastructure workflow run ID. Leave empty to use latest successful run.'
+        required: false
+        type: string
+
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+
+env:
+  PYTHON_VERSION: '3.11'
+  REQUIREMENTS_FILE: 'POC1_with_LLMOps/requirements.txt'
+
+
+jobs:
+
+  # ============================================================
+  # 1. Get Infrastructure Environment
+  # ============================================================
+  get-infra-env:
+    name: Get Infrastructure Environment
+    runs-on: ubuntu-latest
+
+    # Only continue when workflow_run completed successfully
+    if: |
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # Determine infrastructure workflow run
+      # --------------------------------------------------------
+      - name: Determine infrastructure run ID
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+
+            INFRA_RUN_ID="${{ github.event.workflow_run.id }}"
+
+          elif [ -n "${{ inputs.infra_run_id }}" ]; then
+
+            INFRA_RUN_ID="${{ inputs.infra_run_id }}"
+
+          else
+
+            echo "Finding latest successful infrastructure workflow..."
+
+            INFRA_RUN_ID=$(gh run list \
+              --workflow infrastructure.yml \
+              --branch main \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+
+          fi
+
+          if [ -z "$INFRA_RUN_ID" ]; then
+            echo "ERROR: No successful infrastructure workflow found."
+            exit 1
+          fi
+
+          echo "Using infrastructure run: $INFRA_RUN_ID"
+
+          echo "INFRA_RUN_ID=$INFRA_RUN_ID" >> "$GITHUB_ENV"
+
+
+      # --------------------------------------------------------
+      # Download infra-env artifact
+      # --------------------------------------------------------
+      - name: Download infra-env artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+
+          mkdir -p ./infra-env
+
+          gh run download "$INFRA_RUN_ID" \
+            --name infra-env \
+            --dir ./infra-env
+
+          echo "Infrastructure artifact downloaded."
+
+          find ./infra-env -type f -print
+
+
+      # --------------------------------------------------------
+      # Validate artifact
+      # --------------------------------------------------------
+      - name: Validate infrastructure environment
+        shell: bash
+        run: |
+
+          ENV_FILE="./infra-env/infra_output.env"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "ERROR: infra_output.env not found."
+            exit 1
+          fi
+
+          echo "infra_output.env found successfully."
+
+          echo "Available variables:"
+
+          grep -E '^[A-Z_]+=' "$ENV_FILE" \
+            | cut -d'=' -f1
+
+
+      # --------------------------------------------------------
+      # Upload artifact for Python job
+      # --------------------------------------------------------
+      - name: Upload infrastructure environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-infra-env
+          path: ./infra-env/infra_output.env
+          retention-days: 1
+
+
+  # ============================================================
+  # 2. Run Python Scripts Sequentially
+  # ============================================================
+  run-python-scripts:
+    name: Run Python Jobs
+    runs-on: ubuntu-latest
+
+    needs:
+      - get-infra-env
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout source code
+      # --------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # Setup Python 3.11
+      # --------------------------------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+
+      # --------------------------------------------------------
+      # Download infrastructure environment
+      # --------------------------------------------------------
+      - name: Download infrastructure environment
+        uses: actions/download-artifact@v4
+        with:
+          name: application-infra-env
+          path: ./infra-env
+
+
+      # --------------------------------------------------------
+      # Load environment variables
+      # --------------------------------------------------------
+      - name: Load infrastructure variables
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          ENV_FILE="./infra-env/infra_output.env"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "ERROR: infra_output.env not found."
+            exit 1
+          fi
+
+          set -a
+          source "$ENV_FILE"
+          set +a
+
+          echo "KEYVAULT_URL=$KEYVAULT_URL" >> "$GITHUB_ENV"
+
+          echo "Infrastructure environment loaded."
+
+          echo "KEYVAULT_URL configured."
+
+
+      # --------------------------------------------------------
+      # Install Python dependencies
+      # --------------------------------------------------------
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+
+          python --version
+
+          python -m pip install --upgrade pip
+
+          python -m pip install \
+            -r "${{ env.REQUIREMENTS_FILE }}"
+
+
+      # ========================================================
+      # Script 1 - creating_index.py
+      # ========================================================
+      - name: Run creating_index.py
+        shell: bash
+        run: |
+
+          echo "Running creating_index.py"
+
+          python \
+            "POC1_with_LLMOps/scripts/creating_index.py"
+
+
+      # ========================================================
+      # Script 2 - adding_data.py
+      # ========================================================
+      - name: Run adding_data.py
+        shell: bash
+        run: |
+
+          echo "Running adding_data.py"
+
+          python \
+            "POC1_with_LLMOps/scripts/adding_data.py"
+
+
+      # ========================================================
+      # Script 3 - content_filters.py
+      # ========================================================
+      - name: Run content_filters.py
+        shell: bash
+        run: |
+
+          echo "Running content_filters.py"
+
+          python \
+            "POC1_with_LLMOps/scripts/content_filters.py"
+
+
+      # ========================================================
+      # Script 4 - creating_agent.py
+      # ========================================================
+      - name: Run creating_agent.py
+        shell: bash
+        run: |
+
+          echo "Running creating_agent.py"
+
+          python \
+            "POC1_with_LLMOps/scripts/creating_agent.py"
