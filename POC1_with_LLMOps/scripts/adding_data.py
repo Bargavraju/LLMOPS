@@ -54,7 +54,7 @@ def generate_blood_pressure():
     return f"{systolic}/{diastolic} mmHg"
 
 
-print(cnxn_str)
+print("Connecting to Azure SQL Database...")
 
 cnxn = pyodbc.connect(cnxn_str)
 
