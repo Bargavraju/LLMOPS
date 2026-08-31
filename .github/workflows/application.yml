@@ -1,1 +1,407 @@
+name: POC1 Application Deployment
 
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'POC1_with_LLMOps/main.py'
+      - 'POC1_with_LLMOps/Dockerfile'
+      - 'POC1_with_LLMOps/requirements.txt'
+      - 'POC1_with_LLMOps/scripts/**'
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+env:
+  IMAGE_REPOSITORY: healthcare-agent
+  CONTAINER_PORT: 8000
+  INGRESS_TYPE: external
+
+jobs:
+
+  # ============================================================
+  # 1. Download infrastructure output
+  # ============================================================
+  get-infra-env:
+    name: Get Infrastructure Environment
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download infra-env artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: infra-env
+          path: ./infra-env
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check infrastructure environment
+        run: |
+          echo "Infrastructure environment file:"
+          cat ./infra-env/infra_output.env
+
+
+  # ============================================================
+  # 2. Build and Push Docker Image
+  # ============================================================
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: get-infra-env
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load infrastructure variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENV_FILE="./infra-env/infra_output.env"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "Infrastructure environment file not found"
+            exit 1
+          fi
+
+          set -a
+          source "$ENV_FILE"
+          set +a
+
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> "$GITHUB_ENV"
+          echo "LOCATION=$LOCATION" >> "$GITHUB_ENV"
+          echo "CONTAINER_APP_ENV=$CONTAINER_APP_ENV" >> "$GITHUB_ENV"
+          echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> "$GITHUB_ENV"
+          echo "LOG_ANALYTICS_NAME=$LOG_ANALYTICS_NAME" >> "$GITHUB_ENV"
+          echo "KEYVAULT_URL=$KEYVAULT_URL" >> "$GITHUB_ENV"
+          echo "UAMI_ID=$UAMI_ID" >> "$GITHUB_ENV"
+          echo "UAMI_CLIENT_ID=$UAMI_CLIENT_ID" >> "$GITHUB_ENV"
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name "$ACR_NAME"
+
+      - name: Calculate image tag
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${SHORT_SHA}"
+          IMAGE_LATEST="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:latest"
+
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> "$GITHUB_ENV"
+
+          echo "Image: $IMAGE"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f POC1_with_LLMOps/Dockerfile \
+            -t "$IMAGE" \
+            -t "$IMAGE_LATEST" \
+            POC1_with_LLMOps
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE"
+          docker push "$IMAGE_LATEST"
+
+
+  # ============================================================
+  # 3. Deploy Azure Container App
+  # ============================================================
+  deploy-container-app:
+    name: Deploy Azure Container App
+    runs-on: ubuntu-latest
+    needs:
+      - get-infra-env
+      - build-and-push
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load infrastructure variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENV_FILE="./infra-env/infra_output.env"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "Infrastructure environment file not found"
+            exit 1
+          fi
+
+          set -a
+          source "$ENV_FILE"
+          set +a
+
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> "$GITHUB_ENV"
+          echo "LOCATION=$LOCATION" >> "$GITHUB_ENV"
+          echo "CONTAINER_APP_ENV=$CONTAINER_APP_ENV" >> "$GITHUB_ENV"
+          echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> "$GITHUB_ENV"
+          echo "LOG_ANALYTICS_NAME=$LOG_ANALYTICS_NAME" >> "$GITHUB_ENV"
+          echo "KEYVAULT_URL=$KEYVAULT_URL" >> "$GITHUB_ENV"
+          echo "UAMI_ID=$UAMI_ID" >> "$GITHUB_ENV"
+          echo "UAMI_CLIENT_ID=$UAMI_CLIENT_ID" >> "$GITHUB_ENV"
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Configure Azure CLI
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az extension add --name containerapp --upgrade
+
+      - name: Calculate image reference
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${SHORT_SHA}"
+
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Register Azure providers
+        run: |
+          az provider register \
+            --namespace Microsoft.App \
+            --wait
+
+          az provider register \
+            --namespace Microsoft.OperationalInsights \
+            --wait
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --output none
+
+      - name: Create Log Analytics Workspace if required
+        shell: bash
+        run: |
+          if ! az monitor log-analytics workspace show \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$LOG_ANALYTICS_NAME" \
+            > /dev/null 2>&1; then
+
+            az monitor log-analytics workspace create \
+              --resource-group "$RESOURCE_GROUP" \
+              --workspace-name "$LOG_ANALYTICS_NAME" \
+              --location "$LOCATION"
+          fi
+
+      - name: Get Log Analytics information
+        shell: bash
+        run: |
+          LAW_CUST_ID=$(az monitor log-analytics workspace show \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$LOG_ANALYTICS_NAME" \
+            --query customerId \
+            --output tsv)
+
+          LAW_KEY=$(az monitor log-analytics workspace get-shared-keys \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$LOG_ANALYTICS_NAME" \
+            --query primarySharedKey \
+            --output tsv)
+
+          echo "LAW_CUST_ID=$LAW_CUST_ID" >> "$GITHUB_ENV"
+          echo "LAW_KEY=$LAW_KEY" >> "$GITHUB_ENV"
+
+      - name: Create Container App Environment if required
+        shell: bash
+        run: |
+          if ! az containerapp env show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CONTAINER_APP_ENV" \
+            > /dev/null 2>&1; then
+
+            az containerapp env create \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_ENV" \
+              --location "$LOCATION" \
+              --logs-workspace-id "$LAW_CUST_ID" \
+              --logs-workspace-key "$LAW_KEY"
+          fi
+
+      - name: Create or update Container App
+        shell: bash
+        run: |
+
+          if ! az containerapp show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CONTAINER_APP_NAME" \
+            > /dev/null 2>&1; then
+
+            if [ -n "$UAMI_ID" ]; then
+
+              az containerapp create \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$CONTAINER_APP_NAME" \
+                --environment "$CONTAINER_APP_ENV" \
+                --image "$IMAGE" \
+                --registry-server "$ACR_LOGIN_SERVER" \
+                --ingress "$INGRESS_TYPE" \
+                --registry-identity "$UAMI_ID"
+
+            else
+
+              az containerapp create \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$CONTAINER_APP_NAME" \
+                --environment "$CONTAINER_APP_ENV" \
+                --image "$IMAGE" \
+                --registry-server "$ACR_LOGIN_SERVER" \
+                --system-assigned
+
+            fi
+
+          else
+
+            az containerapp update \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --image "$IMAGE"
+
+          fi
+
+      - name: Configure Container App ingress
+        run: |
+          az containerapp ingress enable \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CONTAINER_APP_NAME" \
+            --type "$INGRESS_TYPE" \
+            --target-port "$CONTAINER_PORT"
+
+      - name: Configure ACR authentication
+        shell: bash
+        run: |
+
+          ACR_ID=$(az acr show \
+            --name "$ACR_NAME" \
+            --query id \
+            --output tsv)
+
+          if [ -n "$UAMI_ID" ]; then
+
+            az containerapp identity assign \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --user-assigned "$UAMI_ID"
+
+            UAMI_PRINCIPAL_ID=$(az identity show \
+              --ids "$UAMI_ID" \
+              --query principalId \
+              --output tsv)
+
+            az role assignment create \
+              --assignee-object-id "$UAMI_PRINCIPAL_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "AcrPull" \
+              --scope "$ACR_ID" \
+              > /dev/null || true
+
+            for i in 1 2 3 4 5; do
+
+              if az containerapp registry set \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$CONTAINER_APP_NAME" \
+                --server "$ACR_LOGIN_SERVER" \
+                --identity "$UAMI_ID"; then
+
+                break
+              fi
+
+              echo "Retrying registry configuration ($i/5)..."
+              sleep 5
+
+            done
+
+          else
+
+            az containerapp identity assign \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --system-assigned
+
+            PRINCIPAL_ID=$(az containerapp show \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --query identity.principalId \
+              --output tsv)
+
+            az role assignment create \
+              --assignee-object-id "$PRINCIPAL_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "AcrPull" \
+              --scope "$ACR_ID" \
+              > /dev/null || true
+
+            az containerapp registry set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --server "$ACR_LOGIN_SERVER" \
+              --identity system
+
+          fi
+
+      - name: Configure Container App environment variables
+        shell: bash
+        run: |
+
+          if [ -n "$UAMI_CLIENT_ID" ]; then
+
+            az containerapp update \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --set-env-vars \
+                KEYVAULT_URL="$KEYVAULT_URL" \
+                AZURE_CLIENT_ID="$UAMI_CLIENT_ID"
+
+          else
+
+            az containerapp update \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CONTAINER_APP_NAME" \
+              --set-env-vars \
+                KEYVAULT_URL="$KEYVAULT_URL"
+
+          fi
+
+      - name: Display Container App URL
+        run: |
+          echo "Container App FQDN:"
+
+          az containerapp show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CONTAINER_APP_NAME" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv
