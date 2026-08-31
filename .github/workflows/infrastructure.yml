@@ -1,0 +1,134 @@
+name: POC1 Infrastructure
+
+on:
+  push:
+    branches:
+      - POC1-main
+    paths:
+      - 'POC1_with_LLMOps/infra/**'
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-infrastructure:
+    name: Build & Deploy Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --------------------------------------------------
+      # Login to Azure using OIDC
+      # --------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --------------------------------------------------
+      # Prepare Azure CLI
+      # --------------------------------------------------
+      - name: Prepare Azure CLI
+        shell: bash
+        run: |
+          echo "Azure CLI version:"
+          az version
+
+          echo "Configure dynamic extension installation..."
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+          echo "Upgrade Container Apps extension..."
+          az extension add --name containerapp --upgrade
+
+          echo "Upgrade Bicep..."
+          az bicep upgrade || echo "Bicep upgrade skipped."
+
+      # --------------------------------------------------
+      # Deploy Bicep
+      # --------------------------------------------------
+      - name: Deploy Bicep
+        shell: bash
+        run: |
+          TEMPLATE_FILE="POC1_with_LLMOps/infra/main.bicep"
+          PARAMS_FILE="POC1_with_LLMOps/infra/main.bicepparam"
+          DEPLOY_NAME="poc_1"
+          LOCATION="eastus"
+
+          echo "Running infrastructure deployment..."
+
+          az deployment sub create \
+            --name "$DEPLOY_NAME" \
+            --location "$LOCATION" \
+            --template-file "$TEMPLATE_FILE" \
+            --parameters "$PARAMS_FILE" \
+            --output json > deployment.json
+
+          echo "Infrastructure deployment completed."
+
+      # --------------------------------------------------
+      # Extract deployment outputs
+      # --------------------------------------------------
+      - name: Extract deployment outputs
+        shell: bash
+        run: |
+          echo "Extracting deployment outputs..."
+
+          KV_URI=$(jq -r '.properties.outputs.keyVaultUri.value' deployment.json)
+          ACR_LOGIN_SERVER=$(jq -r '.properties.outputs.acrLoginServer.value' deployment.json)
+          ACR_NAME=$(jq -r '.properties.outputs.acrName.value' deployment.json)
+          CONTAINER_APP_ENV=$(jq -r '.properties.outputs.containerAppEnv.value' deployment.json)
+          CONTAINER_APP_NAME=$(jq -r '.properties.outputs.containerAppName.value' deployment.json)
+          RESOURCE_GROUP=$(jq -r '.properties.outputs.resourceGroupName.value' deployment.json)
+          LOCATION=$(jq -r '.properties.outputs.location.value' deployment.json)
+          LOG_ANALYTICS_NAME=$(jq -r '.properties.outputs.logAnalyticsName.value' deployment.json)
+          UAMI_ID=$(jq -r '.properties.outputs.uamiId.value' deployment.json)
+          UAMI_CLIENT_ID=$(jq -r '.properties.outputs.uamiClientId.value' deployment.json)
+          UAMI_PRINCIPAL_ID=$(jq -r '.properties.outputs.uamiPrincipalId.value' deployment.json)
+          SP_CLIENT_ID=$(jq -r '.properties.outputs.spClientID.value' deployment.json)
+          SP_TENANT_ID=$(jq -r '.properties.outputs.spTenantID.value' deployment.json)
+
+          # IMPORTANT:
+          # Do NOT extract or export spSecret.
+          # GitHub Push Protection can block secrets from entering
+          # the repository/artifacts.
+
+          cat > infra_output.env <<EOF
+          KEYVAULT_URL=$KV_URI
+          ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER
+          ACR_NAME=$ACR_NAME
+          CONTAINER_APP_ENV=$CONTAINER_APP_ENV
+          CONTAINER_APP_NAME=$CONTAINER_APP_NAME
+          RESOURCE_GROUP=$RESOURCE_GROUP
+          LOCATION=$LOCATION
+          LOG_ANALYTICS_NAME=$LOG_ANALYTICS_NAME
+          UAMI_ID=$UAMI_ID
+          UAMI_CLIENT_ID=$UAMI_CLIENT_ID
+          UAMI_PRINCIPAL_ID=$UAMI_PRINCIPAL_ID
+          SP_CLIENT_ID=$SP_CLIENT_ID
+          SP_TENANT_ID=$SP_TENANT_ID
+          EOF
+
+          echo "Generated non-secret infrastructure environment file:"
+          cat infra_output.env
+
+      # --------------------------------------------------
+      # Upload environment artifact
+      # --------------------------------------------------
+      - name: Upload infrastructure environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra-env
+          path: infra_output.env
+          retention-days: 1
