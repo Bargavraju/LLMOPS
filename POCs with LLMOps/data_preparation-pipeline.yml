@@ -1,0 +1,142 @@
+trigger:
+  branches:
+    include:
+      - POC1-main
+  
+  paths:
+    include:
+      - POC1_with_LLMOps/scripts
+
+# Pull env artifact from the infra pipeline
+resources:
+  pipelines:
+    - pipeline: infra
+      source: POC1 Infra          # <-- Use the exact name of your infra pipeline
+      trigger: none
+
+variables:
+  pythonVersion: '3.11'
+  requirementsFile: 'POC1_with_LLMOps/requirements.txt'
+  azureServiceConnection: 'POCsServiceConnection'
+
+pool:
+  name: pocs-LLMOps
+
+stages:
+- stage: RunPython
+  displayName: Run Python Jobs with KV URL
+  jobs:
+
+  # 1) Download env artifact and expose KEYVAULT_URL
+  - job: GetEnv
+    displayName: Download env and expose KEYVAULT_URL
+    steps:
+      - download: infra
+        artifact: infra-env
+        displayName: Download 'infra-env' artifact from infra pipeline
+
+      - task: AzureCLI@2
+        displayName: Load secrets from env file
+        name: loadEnv
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            $envFile = "$(Pipeline.Workspace)/infra/infra-env/infra_output.env"
+            Write-Host "ENV_FILE: $envFile"
+
+            if (-not (Test-Path $envFile)) {
+              Write-Error "Env file not found"
+              exit 1
+            }
+
+            Write-Host "Contents of env file:"
+            Get-Content $envFile
+
+            # Extract values
+            $kvUrl        = (Select-String '^KEYVAULT_URL=' $envFile).Line.Split('=')[1].Trim()
+            $spClientId   = (Select-String '^SP_CLIENT_ID=' $envFile).Line.Split('=')[1].Trim()
+            $spTenantId   = (Select-String '^SP_TENANT_ID=' $envFile).Line.Split('=')[1].Trim()
+            $spSecret     = (Select-String '^SP_SECRET=' $envFile).Line.Split('=')[1].Trim()
+
+            Write-Host "Resolved KEYVAULT_URL: $kvUrl"
+            Write-Host "Resolved SP_CLIENT_ID: $spClientId"
+
+            Write-Output "##vso[task.setvariable variable=KEYVAULT_URL;isOutput=true]$kvUrl"
+            Write-Output "##vso[task.setvariable variable=SP_CLIENT_ID;isOutput=true]$spClientId"
+            Write-Output "##vso[task.setvariable variable=SP_TENANT_ID;isOutput=true]$spTenantId"
+            Write-Output "##vso[task.setvariable variable=SP_SECRET;isOutput=true]$spSecret"
+
+  # 2) Sequentially run the Python scripts
+  - job: RunScriptsSequentially
+    displayName: Run Python scripts sequentially
+    dependsOn: GetEnv
+    variables:
+      KEYVAULT_URL: $[ dependencies.GetEnv.outputs['loadEnv.KEYVAULT_URL'] ]
+      SP_CLIENT_ID: $[ dependencies.GetEnv.outputs['loadEnv.SP_CLIENT_ID'] ]
+      SP_TENANT_ID: $[ dependencies.GetEnv.outputs['loadEnv.SP_TENANT_ID'] ]
+      SP_SECRET: $[ dependencies.GetEnv.outputs['loadEnv.SP_SECRET'] ]    
+    steps:
+      - checkout: self
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(pythonVersion)
+        displayName: Use Python $(pythonVersion)
+
+      # Script 1: creating_index.py
+      - task: AzureCLI@2
+        displayName: Run creating_index.py
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            Write-Host "Using KEYVAULT_URL: $env:KEYVAULT_URL"
+            python --version
+            python -m pip install --upgrade pip
+            python -m pip install -r "$(requirementsFile)"
+
+            $env:AZURE_CLIENT_ID     = "$(SP_CLIENT_ID)"
+            $env:AZURE_TENANT_ID     = "$(SP_TENANT_ID)"
+            $env:AZURE_CLIENT_SECRET = "$(SP_SECRET)"
+
+            python "POC1_with_LLMOps/scripts/creating_index.py"
+
+      # Script 2: adding_data.py
+      - task: AzureCLI@2
+        displayName: Run adding_data.py
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            Write-Host "Running adding_data.py"
+            $env:AZURE_CLIENT_ID     = "$(SP_CLIENT_ID)"
+            $env:AZURE_TENANT_ID     = "$(SP_TENANT_ID)"
+            $env:AZURE_CLIENT_SECRET = "$(SP_SECRET)"
+
+            python "POC1_with_LLMOps/scripts/adding_data.py"
+
+      # Script 3: content_filters.py
+      - task: AzureCLI@2
+        displayName: Run content_filters.py
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            Write-Host "Running content_filters.py"
+            python "POC1_with_LLMOps/scripts/content_filters.py"
+
+      # Script 4: creating_agent.py
+      - task: AzureCLI@2
+        displayName: Run creating_agent.py
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            Write-Host "Running creating_agent.py"
+            python "POC1_with_LLMOps/scripts/creating_agent.py"

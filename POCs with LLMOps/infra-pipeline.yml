@@ -1,0 +1,114 @@
+trigger:
+  branches:
+    include:
+      - POC1-main
+  
+  paths:
+    include:
+      - POC1_with_LLMOps/infra
+
+pool:
+  name: pocs-LLMOps
+
+stages:
+- stage: BuildInfra
+  displayName: Build & Deploy Infra
+  jobs:
+  - job: Deploy
+    displayName: Deploy Infra and Save Env File
+    steps:
+    - checkout: self
+      clean: true
+      fetchDepth: 0
+
+    # Prepare Azure CLI
+    - task: AzureCLI@2
+      displayName: Prepare Azure CLI
+      inputs:
+        azureSubscription: 'POCsServiceConnection'
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          Write-Host "Upgrading Azure CLI (non-fatal if unavailable)..."
+          try { az upgrade --yes } catch { Write-Host "Upgrade skipped." }
+
+          Write-Host "Configure dynamic extension install..."
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+          Write-Host "Upgrade required extensions..."
+          az extension add --name containerapp --upgrade
+
+          Write-Host "Upgrade Bicep CLI..."
+          try { az bicep upgrade } catch { Write-Host "Bicep upgrade skipped." }
+
+          Write-Host "Azure CLI version:"
+          az version
+
+    # Deploy Bicep
+    - task: AzureCLI@2
+      displayName: Deploy Bicep and Export Env Variables
+      inputs:
+        azureSubscription: 'POCsServiceConnection'
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $templateFile = "POC1_with_LLMOps/infra/main.bicep"
+          $paramsFile   = "POC1_with_LLMOps/infra/main.bicepparam"
+          $envFile      = "$(Pipeline.Workspace)/infra_output.env"
+          $deployName   = "poc_1"
+
+          Write-Host "Running infra deployment..."
+          $deploy = az deployment sub create `
+            --name $deployName `
+            --location eastus `
+            --template-file $templateFile `
+            --parameters $paramsFile `
+            -o json | ConvertFrom-Json
+
+          # Extract outputs
+          $outputs = $deploy.properties.outputs
+
+          $kvUri          = $outputs.keyVaultUri.value
+          $acrLogin       = $outputs.acrLoginServer.value
+          $acrName        = $outputs.acrName.value
+          $caEnv          = $outputs.containerAppEnv.value
+          $caName         = $outputs.containerAppName.value
+          $rg             = $outputs.resourceGroupName.value
+          $loc            = $outputs.location.value
+          $law            = $outputs.logAnalyticsName.value
+          $uamiId         = (az deployment sub show -n $deployName --query "properties.outputs.uamiId.value" -o tsv)
+          $uamiClientId   = (az deployment sub show -n $deployName --query "properties.outputs.uamiClientId.value" -o tsv)
+          $uamiPrincipalId= (az deployment sub show -n $deployName --query "properties.outputs.uamiPrincipalId.value" -o tsv)
+          $spClientID     = (az deployment sub show -n $deployName --query "properties.outputs.spClientID.value" -o tsv)
+          $spTenantID     = (az deployment sub show -n $deployName --query "properties.outputs.spTenantID.value" -o tsv)
+          $spSecret       = (az deployment sub show -n $deployName --query "properties.outputs.spSecret.value" -o tsv)
+
+          # Build env file content safely
+          $envContent = @"
+          KEYVAULT_URL=$kvUri
+          ACR_LOGIN_SERVER=$acrLogin
+          ACR_NAME=$acrName
+          CONTAINER_APP_ENV=$caEnv
+          CONTAINER_APP_NAME=$caName
+          RESOURCE_GROUP=$rg
+          LOCATION=$loc
+          LOG_ANALYTICS_NAME=$law
+          UAMI_ID=$uamiId
+          UAMI_CLIENT_ID=$uamiClientId
+          UAMI_PRINCIPAL_ID=$uamiPrincipalId
+          SP_CLIENT_ID=$spClientID
+          SP_TENANT_ID=$spTenantID
+          SP_SECRET=$spSecret
+          "@  
+
+          $envContent | Set-Content -Path $envFile
+
+          Write-Host "Generated env file:"
+          Get-Content $envFile
+
+    # Publish env file as artifact
+    - task: PublishPipelineArtifact@1
+      displayName: Publish Env Artifact
+      inputs:
+        targetPath: '$(Pipeline.Workspace)/infra_output.env'
+        artifact: 'infra-env'
