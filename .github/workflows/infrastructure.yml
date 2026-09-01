@@ -3,7 +3,7 @@ name: POC1 Infrastructure
 on:
   push:
     branches:
-      - POC1-main
+      - main
     paths:
       - 'POC1_with_LLMOps/infra/**'
 
