@@ -1,14 +1,6 @@
 name: POC1 Data Preparation
 
 on:
-  # Run automatically after successful infrastructure deployment
-  workflow_run:
-    workflows:
-      - POC1 Infrastructure
-    types:
-      - completed
-
-  # Run when data-preparation scripts change
   push:
     branches:
       - main
@@ -16,13 +8,18 @@ on:
       - 'POC1_with_LLMOps/scripts/**'
       - 'POC1_with_LLMOps/requirements.txt'
 
-  # Allow manual execution
   workflow_dispatch:
     inputs:
       infra_run_id:
-        description: 'Infrastructure workflow run ID. Leave empty to use latest successful run.'
+        description: 'Infrastructure workflow run ID (optional)'
         required: false
         type: string
+
+  workflow_run:
+    workflows:
+      - POC1 Infrastructure
+    types:
+      - completed
 
 
 permissions:
@@ -39,31 +36,35 @@ env:
 jobs:
 
   # ============================================================
-  # 1. Get Infrastructure Environment
+  # JOB 1 - Get Infrastructure Environment
   # ============================================================
   get-infra-env:
     name: Get Infrastructure Environment
     runs-on: ubuntu-latest
 
-    # Only continue when workflow_run completed successfully
     if: |
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
 
     steps:
 
+      # --------------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
       # --------------------------------------------------------
-      # Determine infrastructure workflow run
+      # Determine Infrastructure Workflow Run
       # --------------------------------------------------------
       - name: Determine infrastructure run ID
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+
+          set -euo pipefail
 
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
 
@@ -92,7 +93,7 @@ jobs:
             exit 1
           fi
 
-          echo "Using infrastructure run: $INFRA_RUN_ID"
+          echo "Infrastructure workflow run: $INFRA_RUN_ID"
 
           echo "INFRA_RUN_ID=$INFRA_RUN_ID" >> "$GITHUB_ENV"
 
@@ -106,6 +107,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
 
+          set -euo pipefail
+
           mkdir -p ./infra-env
 
           gh run download "$INFRA_RUN_ID" \
@@ -118,29 +121,31 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Validate artifact
+      # Validate Environment File
       # --------------------------------------------------------
       - name: Validate infrastructure environment
         shell: bash
         run: |
 
+          set -euo pipefail
+
           ENV_FILE="./infra-env/infra_output.env"
 
           if [ ! -f "$ENV_FILE" ]; then
-            echo "ERROR: infra_output.env not found."
+            echo "ERROR: infra_output.env was not found."
             exit 1
           fi
 
           echo "infra_output.env found successfully."
 
-          echo "Available variables:"
+          echo "Environment variables available:"
 
           grep -E '^[A-Z_]+=' "$ENV_FILE" \
             | cut -d'=' -f1
 
 
       # --------------------------------------------------------
-      # Upload artifact for Python job
+      # Upload artifact for next job
       # --------------------------------------------------------
       - name: Upload infrastructure environment
         uses: actions/upload-artifact@v4
@@ -151,10 +156,10 @@ jobs:
 
 
   # ============================================================
-  # 2. Run Python Scripts Sequentially
+  # JOB 2 - Run Python Scripts Sequentially
   # ============================================================
   run-python-scripts:
-    name: Run Python Jobs
+    name: Run Python Scripts
     runs-on: ubuntu-latest
 
     needs:
@@ -163,7 +168,7 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # Checkout source code
+      # Checkout repository
       # --------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -179,7 +184,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Download infrastructure environment
+      # Download Infrastructure Environment
       # --------------------------------------------------------
       - name: Download infrastructure environment
         uses: actions/download-artifact@v4
@@ -189,7 +194,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Load environment variables
+      # Load KEYVAULT_URL
       # --------------------------------------------------------
       - name: Load infrastructure variables
         shell: bash
@@ -208,15 +213,41 @@ jobs:
           source "$ENV_FILE"
           set +a
 
+          if [ -z "${KEYVAULT_URL:-}" ]; then
+            echo "ERROR: KEYVAULT_URL is not available."
+            exit 1
+          fi
+
           echo "KEYVAULT_URL=$KEYVAULT_URL" >> "$GITHUB_ENV"
 
-          echo "Infrastructure environment loaded."
-
-          echo "KEYVAULT_URL configured."
+          echo "KEYVAULT_URL loaded successfully."
 
 
       # --------------------------------------------------------
-      # Install Python dependencies
+      # Azure Login using GitHub OIDC
+      # --------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+
+      # --------------------------------------------------------
+      # Verify Azure Login
+      # --------------------------------------------------------
+      - name: Verify Azure authentication
+        shell: bash
+        run: |
+
+          az account show \
+            --query "{subscription:id, tenant:tenantId, user:user.name}" \
+            --output table
+
+
+      # --------------------------------------------------------
+      # Install Python Dependencies
       # --------------------------------------------------------
       - name: Install Python dependencies
         shell: bash
@@ -230,53 +261,111 @@ jobs:
             -r "${{ env.REQUIREMENTS_FILE }}"
 
 
+      # --------------------------------------------------------
+      # Install Microsoft ODBC Driver 18
+      # Required by adding_data.py
+      # --------------------------------------------------------
+      - name: Install Microsoft ODBC Driver 18
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          curl -fsSL \
+            https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor \
+            -o /usr/share/keyrings/microsoft-prod.gpg
+
+          curl -fsSL \
+            https://packages.microsoft.com/config/ubuntu/24.04/prod.list \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+
+          sudo apt-get update
+
+          sudo ACCEPT_EULA=Y apt-get install -y \
+            msodbcsql18 \
+            unixodbc-dev
+
+          echo "Installed ODBC drivers:"
+
+          odbcinst -q -d
+
+
       # ========================================================
-      # Script 1 - creating_index.py
+      # SCRIPT 1 - creating_index.py
       # ========================================================
       - name: Run creating_index.py
         shell: bash
         run: |
 
+          set -euo pipefail
+
+          echo "=========================================="
           echo "Running creating_index.py"
+          echo "=========================================="
 
           python \
             "POC1_with_LLMOps/scripts/creating_index.py"
 
 
       # ========================================================
-      # Script 2 - adding_data.py
+      # SCRIPT 2 - adding_data.py
       # ========================================================
       - name: Run adding_data.py
         shell: bash
         run: |
 
+          set -euo pipefail
+
+          echo "=========================================="
           echo "Running adding_data.py"
+          echo "=========================================="
 
           python \
             "POC1_with_LLMOps/scripts/adding_data.py"
 
 
       # ========================================================
-      # Script 3 - content_filters.py
+      # SCRIPT 3 - content_filters.py
       # ========================================================
       - name: Run content_filters.py
         shell: bash
         run: |
 
+          set -euo pipefail
+
+          echo "=========================================="
           echo "Running content_filters.py"
+          echo "=========================================="
 
           python \
             "POC1_with_LLMOps/scripts/content_filters.py"
 
 
       # ========================================================
-      # Script 4 - creating_agent.py
+      # SCRIPT 4 - creating_agent.py
       # ========================================================
       - name: Run creating_agent.py
         shell: bash
         run: |
 
+          set -euo pipefail
+
+          echo "=========================================="
           echo "Running creating_agent.py"
+          echo "=========================================="
 
           python \
             "POC1_with_LLMOps/scripts/creating_agent.py"
+
+
+      # --------------------------------------------------------
+      # Completion
+      # --------------------------------------------------------
+      - name: Data preparation completed
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "DATA PREPARATION COMPLETED SUCCESSFULLY"
+          echo "=========================================="
