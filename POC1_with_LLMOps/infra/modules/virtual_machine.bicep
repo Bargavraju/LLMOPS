@@ -30,7 +30,7 @@ param location string = resourceGroup().location
 param availabilityZone string = '1'
 
 @description('VM size')
-param vmSize string = 'Standard_B2as_v2'
+param vmSize string = 'Standard_B2s'
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
   name: vnetName
