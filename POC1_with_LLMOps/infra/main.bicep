@@ -133,8 +133,6 @@ module resourceGroup './modules/resourceGroups.bicep' = {
     resourceGroupName: rgName
     resourceGroupLocation: location
   }
-  scope: az.resourceGroup(rgName)
-  
 }
 
 module vnet './modules/vnet.bicep' = {
