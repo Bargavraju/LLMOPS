@@ -133,6 +133,8 @@ module resourceGroup './modules/resourceGroups.bicep' = {
     resourceGroupName: rgName
     resourceGroupLocation: location
   }
+  scope: az.resourceGroup(rgName)
+  
 }
 
 module vnet './modules/vnet.bicep' = {
@@ -145,6 +147,9 @@ module vnet './modules/vnet.bicep' = {
     vnetLocation: location
   }
   scope: az.resourceGroup(rgName)
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 // (Optional) Create a VM for testing connectivity
@@ -171,6 +176,9 @@ module uami './modules/uami.bicep' = {
     uamiName: uamiName
   }
   scope: az.resourceGroup(rgName)
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 // Azure Cognitive Search service
@@ -182,6 +190,9 @@ module search './modules/ai_search.bicep' = {
     searchServiceName: searchServiceName
     searchLocation: semantic_location
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 // SQL Server and Database
@@ -196,6 +207,9 @@ module sql './modules/sql.bicep' = {
     location: sql_location
     sqlDatabaseName: sqlDatabaseName
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module logAnalytics './modules/log_analytics.bicep' = {
@@ -206,6 +220,9 @@ module logAnalytics './modules/log_analytics.bicep' = {
     tags: tags
     logAnalyticsWorkspacename: logAnalyticsWorkspaceName
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module appInsights './modules/app_insights.bicep' = {
@@ -217,6 +234,9 @@ module appInsights './modules/app_insights.bicep' = {
     AppInsightsname: '${projectName}-appinsights'
     location: location
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module storage './modules/storage.bicep' = {
@@ -228,6 +248,9 @@ module storage './modules/storage.bicep' = {
     tags: tags
     location: location
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module keyVault './modules/key_vault.bicep' = {
@@ -240,6 +263,9 @@ module keyVault './modules/key_vault.bicep' = {
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module containerRegistry './modules/container_registry.bicep' = {
@@ -249,6 +275,9 @@ module containerRegistry './modules/container_registry.bicep' = {
     location: location
     acrName: containerRegistryname
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 module ai './modules/ai_services.bicep' = {
@@ -261,6 +290,9 @@ module ai './modules/ai_services.bicep' = {
     customSubDomainName: domainName
     tags: tags
   }
+  dependsOn: [
+    resourceGroup
+  ]
 }
 
 // Workspace
