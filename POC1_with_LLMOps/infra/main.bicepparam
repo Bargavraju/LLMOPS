@@ -3,8 +3,8 @@ using './main.bicep'
 //parameters file
 
 param rgName = 'poc1-rg'
-param location = 'centralus'
-param searchServiceName = 'poc1--searchservice'
+param location = 'eastus'
+param searchServiceName = 'poc1-searchservice'
 
 param sqlServerName = 'patient-data-sqlsvr'
 param sqlAdminLogin = 'vaishnavi'
