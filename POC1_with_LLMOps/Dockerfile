@@ -32,4 +32,4 @@ RUN pip install --upgrade pip setuptools wheel \
 # Expose port & run Chainlit
 # ----------------------------
 EXPOSE 8000
-CMD ["chainlit", "run", "main.py", "--host", "0.0.0.0"]
+CMD ["chainlit", "run", "main.py", "--host", "0.0.0.0", "--port", "8000"]
