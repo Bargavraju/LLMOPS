@@ -138,4 +138,4 @@ jobs:
         with:
           name: infra-env
           path: infra_output.env
-          retention-days: 1
+          retention-days: 7
