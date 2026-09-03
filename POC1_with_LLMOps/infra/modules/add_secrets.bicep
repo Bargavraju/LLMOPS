@@ -53,9 +53,6 @@ param sqlServerURL string
 @description('Service Principal (SP) Tenant ID')
 param spTenantID string
 
-@description('Service Principal (SP) Secret')
-param spSecret string
-
 @description('Client ID of the Service Principal (SP)')
 param spClientID string
 
@@ -248,14 +245,6 @@ resource SPTenantId 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'sp-tenant-id'
   properties: {
     value: spTenantID
-  }
-}
-
-resource SPSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'sp-secret'
-  properties: {
-    value: spSecret
   }
 }
 
