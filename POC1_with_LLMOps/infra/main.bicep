@@ -362,7 +362,6 @@ module keys './modules/add_secrets.bicep' = {
     sqlServerURL: sqlServerURL
     projectName: projectName
     spClientID: spClientID
-    spSecret: spSecret
     spTenantID: spTenantID
     storageAccountName: storageName
     storageContainerName: containerNames[0]
