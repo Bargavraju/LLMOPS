@@ -64,9 +64,6 @@ param modelName string
 @description('Service Principal (SP) Tenant ID')
 param spTenantID string
 
-@description('Service Principal (SP) Secret')
-param spSecret string
-
 @description('Service Principal (SP) Client ID')
 param spPrincipalID string
 
@@ -409,4 +406,3 @@ output uamiClientId string = uami.outputs.uamiClientId
 output spPrincipalID string = spPrincipalID
 output spClientID string = spClientID
 output spTenantID string = spTenantID
-output spSecret string = spSecret
