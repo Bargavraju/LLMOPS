@@ -62,7 +62,13 @@ jobs:
       # --------------------------------------------------
       - name: Deploy Bicep
         shell: bash
+        env:
+          VM_ADMIN_PASSWORD: ${{ secrets.VM_ADMIN_PASSWORD }}
+          SQL_ADMIN_PASSWORD: ${{ secrets.SQL_ADMIN_PASSWORD }}
+          SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
         run: |
+          set -euo pipefail
+
           TEMPLATE_FILE="POC1_with_LLMOps/infra/main.bicep"
           PARAMS_FILE="POC1_with_LLMOps/infra/main.bicepparam"
           DEPLOY_NAME="poc_1"
@@ -78,7 +84,6 @@ jobs:
             --output json > deployment.json
 
           echo "Infrastructure deployment completed."
-
       # --------------------------------------------------
       # Extract deployment outputs
       # --------------------------------------------------
