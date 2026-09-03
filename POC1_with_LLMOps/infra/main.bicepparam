@@ -10,7 +10,7 @@ param sqlServerName = 'patient-data-sqlsvr'
 param sqlAdminLogin = 'vaishnavi'
 param sqlDatabaseName = 'patient-data-db'
 
-param sqlAdminPassword = ' '
+param sqlAdminPassword = readEnvironmentVariable('SQL_ADMIN_PASSWORD')
 
 param sql_location = 'eastasia'
 
@@ -47,7 +47,7 @@ param modelName = 'gpt-4.1'
 
 param searchIndexName = 'medical-docs-index'
 
-param serpApiKey = ' '
+param serpApiKey = readEnvironmentVariable('SERP_API_KEY')
 
 param sqlServerURL = '${sqlServerName}.database.windows.net'
 
@@ -81,7 +81,7 @@ param publicIpName =  'poc1-publicip'
 
 param vmName =  'poc1-vm'
 
-param adminPassword =  ' '
+param adminPassword =  param adminPassword = readEnvironmentVariable('VM_ADMIN_PASSWORD')
 
 
 param spSecret =  ''
