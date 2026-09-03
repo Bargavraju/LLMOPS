@@ -8,16 +8,13 @@ on:
       - 'POC1_with_LLMOps/infra/**'
 
   workflow_dispatch:
-
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   deploy-infrastructure:
     name: Build & Deploy Infrastructure
     runs-on: ubuntu-latest
-
+    permissions:
+      id-token: write
+      contents: read
     steps:
       # --------------------------------------------------
       # Checkout repository
