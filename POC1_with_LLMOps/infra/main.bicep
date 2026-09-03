@@ -146,7 +146,6 @@ module vnet './modules/vnet.bicep' = {
     resourceGroup
   ]
 }
-
 // (Optional) Create a VM for testing connectivity
 
 module vm './modules/virtual_machine.bicep' = {
