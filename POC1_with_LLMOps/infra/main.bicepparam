@@ -81,7 +81,7 @@ param publicIpName =  'poc1-publicip'
 
 param vmName =  'poc1-vm'
 
-param adminPassword =  param adminPassword = readEnvironmentVariable('VM_ADMIN_PASSWORD')
+param adminPassword = readEnvironmentVariable('VM_ADMIN_PASSWORD')
 
 param spTenantID =  '4f06e6e8-ae4a-4b64-882a-792a2a921809'
 
